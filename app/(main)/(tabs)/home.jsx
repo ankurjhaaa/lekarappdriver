@@ -123,6 +123,8 @@ export default function DriverHomeScreen() {
     }
   }, [driverStatus]);
 
+  const lastLocationPost = useRef(0);
+
   const startLocationUpdates = async () => {
     if (locationSub.current) locationSub.current.remove();
     locationSub.current = await Location.watchPositionAsync(
@@ -130,8 +132,13 @@ export default function DriverHomeScreen() {
       (loc) => {
         const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
         setCurrentLocation(coords);
-        // Send to server
-        driverAPI.updateLocation(coords.latitude, coords.longitude, loc.coords.heading || 0).catch(() => {});
+        
+        // Explicitly throttle API post
+        const now = Date.now();
+        if (now - lastLocationPost.current >= CONFIG.LOCATION_UPDATE_INTERVAL) {
+          lastLocationPost.current = now;
+          driverAPI.updateLocation(coords.latitude, coords.longitude, loc.coords.heading || 0).catch(() => {});
+        }
       }
     );
   };
@@ -174,20 +181,24 @@ export default function DriverHomeScreen() {
 
   const handleAcceptRide = async () => {
     if (!rideRequest?.booking_id) return;
+    if (countdownRef.current) clearInterval(countdownRef.current);
     setActionLoading(true);
     try {
       const res = await driverAPI.rideAction('accept', rideRequest.booking_id);
       if (res.data.success) {
-        if (countdownRef.current) clearInterval(countdownRef.current);
         setShowRequest(false);
         setCurrentBooking(res.data.booking);
         setDriverStatus('busy');
         router.push({ pathname: '/(main)/ride-active', params: { bookingId: rideRequest.booking_id } });
       } else {
         Alert.alert('Error', res.data.message || 'Could not accept.');
+        setShowRequest(false);
+        setRideRequest(null);
       }
     } catch (e) {
       Alert.alert('Error', e.response?.data?.message || 'Failed to accept.');
+      setShowRequest(false);
+      setRideRequest(null);
     }
     setActionLoading(false);
   };
@@ -303,27 +314,34 @@ export default function DriverHomeScreen() {
 
             <Text style={styles.requestTitle}>New Ride Request!</Text>
 
+            {/* Customer Name */}
+            {rideRequest?.customer_name && (
+              <Text style={{ fontSize: SIZES.md, color: COLORS.textSecondary, marginBottom: 12 }}>
+                {rideRequest.customer_name}
+              </Text>
+            )}
+
             {/* Ride Info */}
             <View style={styles.requestInfo}>
               <View style={styles.requestRow}>
                 <View style={styles.greenDot} />
-                <Text style={styles.requestAddr} numberOfLines={1}>{rideRequest?.pickup_location || 'Pickup'}</Text>
+                <Text style={styles.requestAddr} numberOfLines={1}>{rideRequest?.pickup_location || rideRequest?.pickup || 'Pickup'}</Text>
               </View>
               <View style={styles.dottedLine} />
               <View style={styles.requestRow}>
                 <View style={styles.redDot} />
-                <Text style={styles.requestAddr} numberOfLines={1}>{rideRequest?.drop_location || 'Drop'}</Text>
+                <Text style={styles.requestAddr} numberOfLines={1}>{rideRequest?.drop_location || rideRequest?.drop || 'Drop'}</Text>
               </View>
             </View>
 
             <View style={styles.requestMeta}>
               <View style={styles.metaItem}>
-                <Text style={styles.metaValue}>{formatDistance(rideRequest?.distance_km)}</Text>
+                <Text style={styles.metaValue}>{formatDistance(rideRequest?.distance_km || rideRequest?.distance)}</Text>
                 <Text style={styles.metaLabel}>Distance</Text>
               </View>
               <View style={styles.metaDivider} />
               <View style={styles.metaItem}>
-                <Text style={[styles.metaValue, { color: COLORS.primary }]}>{formatCurrency(rideRequest?.fare_total)}</Text>
+                <Text style={[styles.metaValue, { color: COLORS.primary }]}>{formatCurrency(rideRequest?.fare_total || rideRequest?.fare)}</Text>
                 <Text style={styles.metaLabel}>Fare</Text>
               </View>
               <View style={styles.metaDivider} />
@@ -331,6 +349,15 @@ export default function DriverHomeScreen() {
                 <Text style={styles.metaValue}>{rideRequest?.vehicle_type || '--'}</Text>
                 <Text style={styles.metaLabel}>Type</Text>
               </View>
+              {(rideRequest?.duration_min || rideRequest?.duration) ? (
+                <>
+                  <View style={styles.metaDivider} />
+                  <View style={styles.metaItem}>
+                    <Text style={styles.metaValue}>{rideRequest?.duration_min || rideRequest?.duration} min</Text>
+                    <Text style={styles.metaLabel}>ETA</Text>
+                  </View>
+                </>
+              ) : null}
             </View>
 
             {/* Actions */}

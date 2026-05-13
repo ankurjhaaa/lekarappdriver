@@ -12,6 +12,7 @@ import {
   Modal,
   Linking,
   Platform,
+  ScrollView,
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '../../src/components/MapViewSafe';
 import * as Location from 'expo-location';
@@ -21,7 +22,8 @@ import { COLORS, SIZES, SHADOWS } from '../../src/constants/theme';
 import { driverAPI } from '../../src/api/driver';
 import useDriverStore from '../../src/store/driverStore';
 import { subscribeToBooking } from '../../src/services/socket';
-import { formatCurrency, formatDistance } from '../../src/utils/helpers';
+import { formatCurrency, formatDistance, decodePolyline } from '../../src/utils/helpers';
+import { placesAPI } from '../../src/api/places';
 import { CONFIG } from '../../src/constants/config';
 
 const { width } = Dimensions.get('window');
@@ -40,48 +42,89 @@ export default function RideActiveScreen() {
   const mapRef = useRef(null);
   const pollRef = useRef(null);
   const locationSub = useRef(null);
+  const [routeCoords, setRouteCoords] = useState([]);
+  const [routeFetchedForStatus, setRouteFetchedForStatus] = useState('');
+  const [liveDistanceKm, setLiveDistanceKm] = useState(null);
+  const [liveETA, setLiveETA] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const getVehicleIcon = (type) => {
+    const t = (type || '').toLowerCase();
+    if (t === 'bike') return 'bicycle';
+    if (t === 'auto') return 'car-sport';
+    if (t === 'toto') return 'bus';
+    if (t === 'car' || t === 'cab') return 'car';
+    return 'car';
+  };
 
   useEffect(() => {
     loadBooking();
     startPolling();
     startLocationTracking();
-    if (bookingId) subscribeToBooking(bookingId, (data) => setBooking((prev) => ({ ...prev, ...data })));
+    if (bookingId) subscribeToBooking(bookingId, (data) => {
+      setBooking((prev) => ({ ...prev, ...data }));
+      // Detect destination change from user side
+      if (data.destination_changed) {
+        setRouteFetchedForStatus(''); // Force route redraw
+        Alert.alert('📍 Destination Changed', `New destination: ${data.drop_location || 'Updated'}`);
+      }
+    });
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (locationSub.current) locationSub.current.remove();
     };
   }, []);
 
-  // Live GPS tracking with heading
+  // Live GPS tracking — only for local map display (home.jsx already posts to server)
   const startLocationTracking = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') return;
     locationSub.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, timeInterval: CONFIG.LOCATION_UPDATE_INTERVAL, distanceInterval: 5 },
+      { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10 },
       (loc) => {
-        const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-        setMyLoc(coords);
+        setMyLoc({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
         setMyHeading(loc.coords.heading || 0);
-        // Send location + heading to server
-        driverAPI.updateLocation(coords.latitude, coords.longitude, loc.coords.heading || 0).catch(() => {});
       }
     );
   };
 
-  // Fit map to show driver + pickup/drop
+  // Fit map and update route geometry based on status
   useEffect(() => {
     if (!mapRef.current || !booking || !myLoc) return;
+
+    const s = booking.status;
+    if (routeFetchedForStatus === s) return; // Prevent API spam
+
     const points = [{ latitude: myLoc.latitude, longitude: myLoc.longitude }];
-    if (booking.pickup_lat) points.push({ latitude: parseFloat(booking.pickup_lat), longitude: parseFloat(booking.pickup_lng) });
-    if (booking.drop_lat && ['ride_started', 'otp_verified'].includes(booking.status)) {
+    
+    if (['driver_assigned', 'driver_enroute', 'arrived_at_pickup'].includes(s) && booking.pickup_lat) {
+      points.push({ latitude: parseFloat(booking.pickup_lat), longitude: parseFloat(booking.pickup_lng) });
+      // Fetch driver → pickup route
+      fetchRoute(myLoc.latitude, myLoc.longitude, parseFloat(booking.pickup_lat), parseFloat(booking.pickup_lng));
+      setRouteFetchedForStatus(s);
+    } else if (['ride_started', 'otp_verified'].includes(s) && booking.drop_lat) {
       points.push({ latitude: parseFloat(booking.drop_lat), longitude: parseFloat(booking.drop_lng) });
+      // Fetch driver → drop route
+      fetchRoute(myLoc.latitude, myLoc.longitude, parseFloat(booking.drop_lat), parseFloat(booking.drop_lng));
+      setRouteFetchedForStatus(s);
     }
     if (points.length > 1) {
       setTimeout(() => {
         mapRef.current?.fitToCoordinates(points, { edgePadding: { top: 100, right: 60, bottom: 300, left: 60 }, animated: true });
       }, 500);
     }
-  }, [booking?.status]);
+  }, [booking?.status, myLoc, routeFetchedForStatus]);
+
+  const fetchRoute = async (fromLat, fromLng, toLat, toLng) => {
+    try {
+      const res = await placesAPI.directions(fromLat, fromLng, toLat, toLng);
+      if (res.data.success) {
+        if (res.data.geometry) setRouteCoords(decodePolyline(res.data.geometry));
+        setLiveDistanceKm(res.data.distance_km);
+        setLiveETA(res.data.duration_min);
+      }
+    } catch (e) { console.warn('Route fetch error:', e); }
+  };
 
   const loadBooking = async () => {
     try {
@@ -94,6 +137,7 @@ export default function RideActiveScreen() {
   };
 
   const startPolling = () => {
+    // Polling is a safety fallback — WebSocket handles real-time
     pollRef.current = setInterval(async () => {
       try {
         const res = await driverAPI.getStatus();
@@ -102,7 +146,7 @@ export default function RideActiveScreen() {
           clearInterval(pollRef.current);
         }
       } catch (e) {}
-    }, 8000);
+    }, 30000); // 30s fallback
   };
 
   // Open Google Maps for turn-by-turn navigation
@@ -218,12 +262,30 @@ export default function RideActiveScreen() {
           </View>
 
           <View style={styles.addressCard}>
-            <View style={styles.addrRow}><View style={styles.rDot} /><Text style={styles.addrText} numberOfLines={2}>Drop: {booking.drop_location}</Text></View>
+            <View style={styles.addrRow}>
+              <View style={styles.rDot} />
+              <Text style={[styles.addrText, { flex: 1 }]} numberOfLines={2}>Drop: {booking.drop_location}</Text>
+              {booking.segments && booking.segments.length > 0 && (
+                <TouchableOpacity onPress={() => setShowHistory(true)} style={{ paddingLeft: 8 }}>
+                  <Ionicons name="time-outline" size={20} color={COLORS.primary} />
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
           <View style={styles.rideMeta}>
-            <View style={styles.metaItem}><Text style={styles.metaV}>{formatDistance(booking.distance_km)}</Text><Text style={styles.metaL}>Distance</Text></View>
-            <View style={styles.metaItem}><Text style={[styles.metaV, { color: COLORS.primary }]}>{formatCurrency(booking.fare_total)}</Text><Text style={styles.metaL}>Fare</Text></View>
+            <View style={styles.metaItem}>
+              <Text style={styles.metaV}>{formatDistance(liveDistanceKm || booking.distance_km)}</Text>
+              <Text style={styles.metaL}>Left</Text>
+            </View>
+            <View style={styles.metaItem}>
+              <Text style={styles.metaV}>{liveETA || booking.duration_min || '...'} min</Text>
+              <Text style={styles.metaL}>ETA</Text>
+            </View>
+            <View style={styles.metaItem}>
+              <Text style={[styles.metaV, { color: COLORS.primary }]}>{formatCurrency(booking.fare_total)}</Text>
+              <Text style={styles.metaL}>Fare</Text>
+            </View>
           </View>
 
           {/* Navigate to Drop */}
@@ -288,15 +350,21 @@ export default function RideActiveScreen() {
         showsUserLocation showsMyLocationButton={false}
         customMapStyle={darkMapStyle}
       >
-        {booking?.pickup_lat && (
+        {/* Pickup Marker — only show before ride starts */}
+        {booking?.pickup_lat && !['ride_started', 'otp_verified', 'ride_completed'].includes(booking?.status) && (
           <Marker coordinate={{ latitude: parseFloat(booking.pickup_lat), longitude: parseFloat(booking.pickup_lng) }}>
-            <View style={styles.pickupMarker}><Ionicons name="location" size={20} color={COLORS.success} /></View>
+            <View style={styles.pickupMarker}><Ionicons name="person" size={20} color={COLORS.white} /></View>
           </Marker>
         )}
-        {booking?.drop_lat && (
+        {/* Drop Marker — show during ride and after */}
+        {booking?.drop_lat && ['ride_started', 'otp_verified', 'driver_assigned', 'driver_enroute', 'arrived_at_pickup'].includes(booking?.status) && (
           <Marker coordinate={{ latitude: parseFloat(booking.drop_lat), longitude: parseFloat(booking.drop_lng) }}>
             <View style={styles.dropMarker}><Ionicons name="flag" size={20} color={COLORS.primary} /></View>
           </Marker>
+        )}
+        {/* Route Polyline */}
+        {routeCoords.length > 0 && (
+          <Polyline coordinates={routeCoords} strokeColor={COLORS.primary} strokeWidth={4} />
         )}
         {/* Driver's own location marker with heading */}
         {myLoc && (
@@ -307,7 +375,7 @@ export default function RideActiveScreen() {
             anchor={{ x: 0.5, y: 0.5 }}
           >
             <View style={styles.driverMarker}>
-              <Ionicons name="car" size={16} color={COLORS.white} />
+              <Ionicons name={getVehicleIcon(booking?.vehicle_type)} size={16} color={COLORS.white} />
             </View>
           </Marker>
         )}
@@ -360,6 +428,34 @@ export default function RideActiveScreen() {
                 <Text style={[styles.otpConfirmText, { color: COLORS.black }]}>Complete</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Destination History Modal */}
+      <Modal visible={showHistory} animationType="fade" transparent>
+        <View style={styles.modalOv}>
+          <View style={[styles.otpModal, { maxHeight: '80%' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: SIZES.lg, fontWeight: '800', color: COLORS.text }}>Destination History</Text>
+              <TouchableOpacity onPress={() => setShowHistory(false)}>
+                <Ionicons name="close" size={24} color={COLORS.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 400, marginTop: 10 }}>
+              {booking?.segments?.map((seg, i) => (
+                <View key={i} style={{ flexDirection: 'row', marginBottom: 20 }}>
+                  <View style={{ alignItems: 'center', marginRight: 12 }}>
+                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: i === booking.segments.length - 1 ? COLORS.primary : COLORS.textSecondary }} />
+                    {i < booking.segments.length - 1 && <View style={{ width: 2, height: 40, backgroundColor: COLORS.border, marginTop: 4 }} />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: SIZES.sm, color: COLORS.textSecondary }}>{i === 0 ? 'Original Destination' : `Changed Destination ${i}`}</Text>
+                    <Text style={{ fontSize: SIZES.md, color: COLORS.text, fontWeight: '600', marginTop: 2 }}>{seg.to_address}</Text>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
           </View>
         </View>
       </Modal>
