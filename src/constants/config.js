@@ -2,7 +2,9 @@
  * Driver App Configuration
  * HOST = your computer's LAN IP (same Wi-Fi network required)
  */
-const HOST = '192.168.29.128';
+import { Platform } from 'react-native';
+
+const HOST = '10.158.108.98';
 
 export const CONFIG = {
   API_BASE_URL: `http://${HOST}:8000/api/v1`,

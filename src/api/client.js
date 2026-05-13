@@ -12,6 +12,7 @@ api.interceptors.request.use(async (config) => {
   try {
     const token = await AsyncStorage.getItem('driver_auth_token');
     if (token) config.headers.Authorization = `Bearer ${token}`;
+    console.log(`[DRIVER API] ${config.method?.toUpperCase()} ${config.url}`, config.data || '');
   } catch (e) {}
   return config;
 });
