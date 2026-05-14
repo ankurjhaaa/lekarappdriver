@@ -43,6 +43,7 @@ export default function DriverHomeScreen() {
   const mapRef = useRef(null);
   const locationSub = useRef(null);
   const countdownRef = useRef(null);
+  const currentRequestRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const slideAnim = useRef(new Animated.Value(300)).current;
 
@@ -149,6 +150,11 @@ export default function DriverHomeScreen() {
   const handleNewRideRequest = useCallback((data) => {
     // Don't show popup if driver already accepted a ride
     if (acceptedRef.current) return;
+    
+    // Ignore duplicate broadcasts for the same booking to prevent timer reset
+    if (currentRequestRef.current === data.booking_id) return;
+    currentRequestRef.current = data.booking_id;
+
     Vibration.vibrate([0, 500, 200, 500, 200, 500]);
     setRideRequest(data);
     setShowRequest(true);
@@ -165,6 +171,7 @@ export default function DriverHomeScreen() {
       setCountdown(t);
       if (t <= 0) {
         clearInterval(countdownRef.current);
+        currentRequestRef.current = null;
         handleRejectRide();
       }
     }, 1000);
@@ -191,6 +198,7 @@ export default function DriverHomeScreen() {
       const res = await driverAPI.rideAction('accept', rideRequest.booking_id);
       if (res.data.success) {
         acceptedRef.current = true;
+        currentRequestRef.current = null;
         setShowRequest(false);
         setCurrentBooking(res.data.booking);
         setDriverStatus('busy');
@@ -211,6 +219,7 @@ export default function DriverHomeScreen() {
   const handleRejectRide = async () => {
     if (countdownRef.current) clearInterval(countdownRef.current);
     setShowRequest(false);
+    currentRequestRef.current = null;
     slideAnim.setValue(300);
     if (rideRequest?.booking_id) {
       try { await driverAPI.rideAction('reject', rideRequest.booking_id); } catch (e) {}
