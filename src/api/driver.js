@@ -18,4 +18,7 @@ export const driverAPI = {
   getEarnings: () => api.get('/driver/earnings'),
   getRideHistory: (page = 1) => api.get('/driver/ride-history', { params: { page } }),
   getProfile: () => api.get('/driver/profile'),
+  // Chat
+  getMessages: (bookingId) => api.get(`/rides/${bookingId}/chat`),
+  sendMessage: (bookingId, message) => api.post(`/rides/${bookingId}/chat`, { message }),
 };

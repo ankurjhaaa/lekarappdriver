@@ -47,11 +47,17 @@ export const subscribeToDriver = (driverId, onRequest) => {
   return channel;
 };
 
-/** Subscribe to booking channel for ride updates */
-export const subscribeToBooking = (bookingId, onUpdate) => {
+/** Subscribe to booking channel for ride updates + chat */
+export const subscribeToBooking = (bookingId, onUpdate, onChatMessage = null) => {
   if (!pusherInstance) return null;
   const channel = pusherInstance.subscribe(`private-booking.${bookingId}`);
   channel.bind('BookingUpdated', onUpdate);
+  if (onChatMessage) {
+    channel.bind('ChatMessageSent', (data) => {
+      console.log('[WS] ChatMessage:', data);
+      onChatMessage(data.message || data);
+    });
+  }
   return channel;
 };
 

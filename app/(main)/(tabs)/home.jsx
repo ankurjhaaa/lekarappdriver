@@ -48,6 +48,7 @@ export default function DriverHomeScreen() {
 
   // Initial load
   useEffect(() => {
+    acceptedRef.current = false; // Reset so new ride requests can show
     initializeDriver();
     return () => {
       if (locationSub.current) locationSub.current.remove();
@@ -144,7 +145,10 @@ export default function DriverHomeScreen() {
   };
 
   // Handle incoming ride request from WebSocket
+  const acceptedRef = useRef(false);
   const handleNewRideRequest = useCallback((data) => {
+    // Don't show popup if driver already accepted a ride
+    if (acceptedRef.current) return;
     Vibration.vibrate([0, 500, 200, 500, 200, 500]);
     setRideRequest(data);
     setShowRequest(true);
@@ -186,6 +190,7 @@ export default function DriverHomeScreen() {
     try {
       const res = await driverAPI.rideAction('accept', rideRequest.booking_id);
       if (res.data.success) {
+        acceptedRef.current = true;
         setShowRequest(false);
         setCurrentBooking(res.data.booking);
         setDriverStatus('busy');

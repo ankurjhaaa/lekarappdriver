@@ -23,6 +23,7 @@ import { driverAPI } from '../../src/api/driver';
 import useDriverStore from '../../src/store/driverStore';
 import { subscribeToBooking } from '../../src/services/socket';
 import { formatCurrency, formatDistance, decodePolyline } from '../../src/utils/helpers';
+import ChatModal from '../../src/components/ride/ChatModal';
 import { placesAPI } from '../../src/api/places';
 import { CONFIG } from '../../src/constants/config';
 
@@ -47,6 +48,8 @@ export default function RideActiveScreen() {
   const [liveDistanceKm, setLiveDistanceKm] = useState(null);
   const [liveETA, setLiveETA] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const chatMsgRef = useRef(null);
 
   const getVehicleIcon = (type) => {
     const t = (type || '').toLowerCase();
@@ -68,6 +71,8 @@ export default function RideActiveScreen() {
         setRouteFetchedForStatus(''); // Force route redraw
         Alert.alert('📍 Destination Changed', `New destination: ${data.drop_location || 'Updated'}`);
       }
+    }, (msg) => {
+      if (chatMsgRef.current) chatMsgRef.current(msg);
     });
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -240,7 +245,10 @@ export default function RideActiveScreen() {
 
           <View style={styles.infoRow}>
             <Text style={styles.waitingText}>Waiting for passenger...</Text>
-            <TouchableOpacity style={styles.callBtn}>
+            <TouchableOpacity style={styles.callBtn} onPress={() => setShowChat(true)}>
+              <Ionicons name="chatbubble-outline" size={18} color={COLORS.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.callBtn} onPress={() => Linking.openURL(`tel:${booking.user_phone || ''}`)}>
               <Ionicons name="call" size={18} color={COLORS.success} />
             </TouchableOpacity>
           </View>
@@ -289,10 +297,15 @@ export default function RideActiveScreen() {
           </View>
 
           {/* Navigate to Drop */}
-          <TouchableOpacity style={styles.navBtn} onPress={() => openNavigation(booking.drop_lat, booking.drop_lng, 'Drop')}>
-            <Ionicons name="navigate" size={18} color={COLORS.info} />
-            <Text style={styles.navBtnText}>Navigate to Drop</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity style={[styles.navBtn, { flex: 1 }]} onPress={() => openNavigation(booking.drop_lat, booking.drop_lng, 'Drop')}>
+              <Ionicons name="navigate" size={18} color={COLORS.info} />
+              <Text style={styles.navBtnText}>Navigate</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.navBtn, { backgroundColor: COLORS.primary + '10' }]} onPress={() => setShowChat(true)}>
+              <Ionicons name="chatbubble-outline" size={18} color={COLORS.primary} />
+            </TouchableOpacity>
+          </View>
 
           <TouchableOpacity style={[styles.primaryBtn, { backgroundColor: COLORS.warning }]} onPress={() => setShowCompleteModal(true)} disabled={actionLoading}>
             <Ionicons name="checkmark-done" size={20} color={COLORS.black} />
@@ -459,6 +472,15 @@ export default function RideActiveScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Chat Modal */}
+      <ChatModal
+        visible={showChat}
+        onClose={() => setShowChat(false)}
+        bookingId={booking?.id}
+        userName={booking?.user_name || 'Rider'}
+        onNewMessage={chatMsgRef}
+      />
     </View>
   );
 }
