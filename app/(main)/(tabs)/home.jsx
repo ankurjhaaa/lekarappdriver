@@ -234,7 +234,7 @@ export default function DriverHomeScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Map */}
       <MapView
         ref={mapRef}
@@ -383,7 +383,7 @@ export default function DriverHomeScreen() {
           </Animated.View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 

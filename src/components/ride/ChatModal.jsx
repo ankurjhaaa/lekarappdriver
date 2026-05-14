@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Modal,
   FlatList, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../../constants/theme';
 import { driverAPI } from '../../api/driver';
@@ -34,7 +35,18 @@ export default function ChatModal({ visible, onClose, bookingId, userName, onNew
   // Called from parent when WebSocket message arrives
   const addMessage = (msg) => {
     setMessages(prev => {
-      if (prev.find(m => m.id === msg.id)) return prev;
+      if (prev.find(m => String(m.id) === String(msg.id))) return prev;
+      
+      // Prevent duplication of optimistic messages if WS arrives before API response
+      if (msg.sender_type === 'driver') {
+        const tempIdx = prev.findIndex(m => String(m.id).startsWith('temp_') && m.message === msg.message);
+        if (tempIdx !== -1) {
+          const next = [...prev];
+          next[tempIdx] = msg;
+          return next;
+        }
+      }
+      
       return [...prev, msg];
     });
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
@@ -64,9 +76,14 @@ export default function ChatModal({ visible, onClose, bookingId, userName, onNew
     try {
       const res = await driverAPI.sendMessage(bookingId, msgText);
       if (res.data.success) {
-        setMessages(prev =>
-          prev.map(m => m.id === tempMsg.id ? res.data.message : m)
-        );
+        setMessages(prev => {
+          const newMsg = res.data.message;
+          const filtered = prev.filter(m => m.id !== tempMsg.id);
+          if (filtered.some(m => String(m.id) === String(newMsg.id))) {
+            return filtered;
+          }
+          return [...filtered, newMsg];
+        });
       }
     } catch (e) {
       setMessages(prev => prev.filter(m => m.id !== tempMsg.id));
@@ -91,12 +108,13 @@ export default function ChatModal({ visible, onClose, bookingId, userName, onNew
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent>
-      <KeyboardAvoidingView
-        style={st.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={st.container}>
+    <Modal visible={visible} animationType="slide" transparent={false}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.background }}>
+        <KeyboardAvoidingView
+          style={st.overlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={st.container}>
           {/* Header */}
           <View style={st.header}>
             <TouchableOpacity onPress={onClose} style={st.headerBack}>
@@ -160,16 +178,17 @@ export default function ChatModal({ visible, onClose, bookingId, userName, onNew
               )}
             </TouchableOpacity>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
 
 const st = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  container: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, height: '85%' },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border + '50' },
+  overlay: { flex: 1, backgroundColor: COLORS.background },
+  container: { flex: 1, backgroundColor: COLORS.background },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   headerBack: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
   headerInfo: { flexDirection: 'row', alignItems: 'center', marginLeft: 8, gap: 10 },
   headerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
@@ -180,17 +199,17 @@ const st = StyleSheet.create({
   msgRow: { flexDirection: 'row', marginBottom: 8, justifyContent: 'flex-start' },
   msgRowMe: { justifyContent: 'flex-end' },
   bubble: { maxWidth: '75%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16 },
-  bubbleOther: { backgroundColor: '#fff', borderWidth: 1, borderColor: COLORS.border, borderBottomLeftRadius: 4 },
+  bubbleOther: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderBottomLeftRadius: 4 },
   bubbleMe: { backgroundColor: COLORS.primary, borderBottomRightRadius: 4 },
   bubbleText: { fontSize: SIZES.md, color: COLORS.text, lineHeight: 20 },
-  bubbleTextMe: { color: '#fff' },
-  bubbleTime: { fontSize: 10, color: COLORS.textLight, marginTop: 4, textAlign: 'right' },
-  bubbleTimeMe: { color: '#ffffffAA' },
+  bubbleTextMe: { color: COLORS.white },
+  bubbleTime: { fontSize: 10, color: COLORS.textMuted, marginTop: 4, textAlign: 'right' },
+  bubbleTimeMe: { color: 'rgba(255,255,255,0.7)' },
   emptyWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 80 },
   emptyText: { fontSize: SIZES.md, fontWeight: '600', color: COLORS.textSecondary, marginTop: 12 },
-  emptySubtext: { fontSize: SIZES.sm, color: COLORS.textLight, marginTop: 4 },
-  inputBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: COLORS.border + '50', paddingBottom: Platform.OS === 'ios' ? 28 : 12 },
-  input: { flex: 1, backgroundColor: '#fff', borderWidth: 1, borderColor: COLORS.border, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: SIZES.md, maxHeight: 100, color: COLORS.text },
+  emptySubtext: { fontSize: SIZES.sm, color: COLORS.textMuted, marginTop: 4 },
+  inputBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: COLORS.border, paddingBottom: Platform.OS === 'ios' ? 28 : 12 },
+  input: { flex: 1, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: SIZES.md, maxHeight: 100, color: COLORS.text },
   sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
   sendBtnDisabled: { opacity: 0.5 },
 });

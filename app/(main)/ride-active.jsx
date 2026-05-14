@@ -21,7 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../../src/constants/theme';
 import { driverAPI } from '../../src/api/driver';
 import useDriverStore from '../../src/store/driverStore';
-import { subscribeToBooking } from '../../src/services/socket';
+import { subscribeToBooking, initWebSocket } from '../../src/services/socket';
 import { formatCurrency, formatDistance, decodePolyline } from '../../src/utils/helpers';
 import ChatModal from '../../src/components/ride/ChatModal';
 import { placesAPI } from '../../src/api/places';
@@ -43,6 +43,23 @@ export default function RideActiveScreen() {
   const mapRef = useRef(null);
   const pollRef = useRef(null);
   const locationSub = useRef(null);
+  const wsSubscribed = useRef(false);
+
+  const startWebSocket = async (id) => {
+    if (wsSubscribed.current) return;
+    await initWebSocket();
+    subscribeToBooking(id, (data) => {
+      setBooking((prev) => ({ ...prev, ...data }));
+      // Detect destination change from user side
+      if (data.destination_changed) {
+        setRouteFetchedForStatus(''); // Force route redraw
+        Alert.alert('📍 Destination Changed', `New destination: ${data.drop_location || 'Updated'}`);
+      }
+    }, (msg) => {
+      if (chatMsgRef.current) chatMsgRef.current(msg);
+    });
+    wsSubscribed.current = true;
+  };
   const [routeCoords, setRouteCoords] = useState([]);
   const [routeFetchedForStatus, setRouteFetchedForStatus] = useState('');
   const [liveDistanceKm, setLiveDistanceKm] = useState(null);
@@ -64,16 +81,7 @@ export default function RideActiveScreen() {
     loadBooking();
     startPolling();
     startLocationTracking();
-    if (bookingId) subscribeToBooking(bookingId, (data) => {
-      setBooking((prev) => ({ ...prev, ...data }));
-      // Detect destination change from user side
-      if (data.destination_changed) {
-        setRouteFetchedForStatus(''); // Force route redraw
-        Alert.alert('📍 Destination Changed', `New destination: ${data.drop_location || 'Updated'}`);
-      }
-    }, (msg) => {
-      if (chatMsgRef.current) chatMsgRef.current(msg);
-    });
+    if (bookingId) startWebSocket(bookingId);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (locationSub.current) locationSub.current.remove();
@@ -136,6 +144,7 @@ export default function RideActiveScreen() {
       const res = await driverAPI.getStatus();
       if (res.data.success && res.data.booking) {
         setBooking(res.data.booking);
+        startWebSocket(res.data.booking.id);
       }
     } catch (e) {}
     setLoading(false);
@@ -352,7 +361,7 @@ export default function RideActiveScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <MapView
         ref={mapRef} style={styles.map} provider={PROVIDER_GOOGLE}
         initialRegion={{
@@ -481,7 +490,7 @@ export default function RideActiveScreen() {
         userName={booking?.user_name || 'Rider'}
         onNewMessage={chatMsgRef}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
