@@ -156,16 +156,17 @@ export default function DriverHomeScreen() {
     currentRequestRef.current = data.booking_id;
 
     Vibration.vibrate([0, 500, 200, 500, 200, 500]);
+    const timeout = data.request_timeout || requestTimeout || 20;
     setRideRequest(data);
     setShowRequest(true);
-    setCountdown(requestTimeout);
+    setCountdown(timeout);
 
     // Animate
     Animated.spring(slideAnim, { toValue: 0, friction: 8, useNativeDriver: true }).start();
 
     // Countdown
     if (countdownRef.current) clearInterval(countdownRef.current);
-    let t = requestTimeout;
+    let t = timeout;
     countdownRef.current = setInterval(() => {
       t -= 1;
       setCountdown(t);
@@ -200,18 +201,31 @@ export default function DriverHomeScreen() {
         acceptedRef.current = true;
         currentRequestRef.current = null;
         setShowRequest(false);
+        slideAnim.setValue(300); // Reset animation
+        setRideRequest(null); // Clear request data
         setCurrentBooking(res.data.booking);
         setDriverStatus('busy');
         router.push({ pathname: '/(main)/ride-active', params: { bookingId: rideRequest.booking_id } });
       } else {
-        Alert.alert('Error', res.data.message || 'Could not accept.');
+        // If ride is no longer available, just close the popup quietly as requested
+        const msg = res.data.message || '';
+        if (!msg.toLowerCase().includes('no longer available') && !msg.toLowerCase().includes('expired')) {
+          Alert.alert('Not Available', msg || 'Could not accept.');
+        }
         setShowRequest(false);
+        slideAnim.setValue(300);
         setRideRequest(null);
+        currentRequestRef.current = null;
       }
     } catch (e) {
-      Alert.alert('Error', e.response?.data?.message || 'Failed to accept.');
+      const msg = e.response?.data?.message || '';
+      if (!msg.toLowerCase().includes('no longer available') && !msg.toLowerCase().includes('expired')) {
+        Alert.alert('Error', msg || 'Failed to accept.');
+      }
       setShowRequest(false);
+      slideAnim.setValue(300);
       setRideRequest(null);
+      currentRequestRef.current = null;
     }
     setActionLoading(false);
   };
