@@ -1,31 +1,31 @@
-import { useState, useEffect, useRef } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Dimensions,
-  ActivityIndicator,
-  Alert,
-  TextInput,
-  Modal,
-  Linking,
-  Platform,
-  ScrollView,
-} from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '../../src/components/MapViewSafe';
+import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { COLORS, SIZES, SHADOWS } from '../../src/constants/theme';
+import { useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  DeviceEventEmitter,
+  Dimensions,
+  Linking,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { driverAPI } from '../../src/api/driver';
-import useDriverStore from '../../src/store/driverStore';
-import { subscribeToBooking, initWebSocket } from '../../src/services/socket';
-import { formatCurrency, formatDistance, decodePolyline } from '../../src/utils/helpers';
-import ChatModal from '../../src/components/ride/ChatModal';
 import { placesAPI } from '../../src/api/places';
-import { CONFIG } from '../../src/constants/config';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '../../src/components/MapViewSafe';
+import ChatModal from '../../src/components/ride/ChatModal';
+import { COLORS, SHADOWS, SIZES } from '../../src/constants/theme';
+import { initWebSocket, subscribeToBooking } from '../../src/services/socket';
+import useDriverStore from '../../src/store/driverStore';
+import { decodePolyline, formatCurrency, formatDistance } from '../../src/utils/helpers';
 
 const { width } = Dimensions.get('window');
 
@@ -50,10 +50,29 @@ export default function RideActiveScreen() {
     await initWebSocket();
     subscribeToBooking(id, (data) => {
       setBooking((prev) => ({ ...prev, ...data }));
-      // Detect destination change from user side
       if (data.destination_changed) {
-        setRouteFetchedForStatus(''); // Force route redraw
-        Alert.alert('📍 Destination Changed', `New destination: ${data.drop_location || 'Updated'}`);
+        const newDropLat = parseFloat(data.drop_lat);
+        const newDropLng = parseFloat(data.drop_lng);
+        if (newDropLat && newDropLng) {
+          // Re-fetch route on this screen
+          if (myLoc) {
+            fetchRoute(myLoc.latitude, myLoc.longitude, newDropLat, newDropLng);
+            setRouteFetchedForStatus('');
+            setTimeout(() => {
+              mapRef.current?.fitToCoordinates(
+                [{ latitude: myLoc.latitude, longitude: myLoc.longitude }, { latitude: newDropLat, longitude: newDropLng }],
+                { edgePadding: { top: 100, right: 60, bottom: 300, left: 60 }, animated: true }
+              );
+            }, 600);
+          } else {
+            setRouteFetchedForStatus('');
+          }
+          // Emit to navigation screen if it's open
+          DeviceEventEmitter.emit('NAV_DEST_CHANGED', {
+            lat: newDropLat, lng: newDropLng,
+            address: data.drop_location || 'Updated Destination',
+          });
+        }
       }
     }, (msg) => {
       if (chatMsgRef.current) chatMsgRef.current(msg);
@@ -66,6 +85,7 @@ export default function RideActiveScreen() {
   const [liveETA, setLiveETA] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
   const chatMsgRef = useRef(null);
 
   const getVehicleIcon = (type) => {
@@ -77,6 +97,9 @@ export default function RideActiveScreen() {
     return 'car';
   };
 
+  const headingSub = useRef(null);
+  const speedRef = useRef(0);
+
   useEffect(() => {
     loadBooking();
     startPolling();
@@ -85,20 +108,41 @@ export default function RideActiveScreen() {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (locationSub.current) locationSub.current.remove();
+      if (headingSub.current) headingSub.current.remove();
     };
   }, []);
 
-  // Live GPS tracking — only for local map display (home.jsx already posts to server)
+  // Live GPS tracking — High Frequency for Navigation
   const startLocationTracking = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') return;
+    
+    // GPS Position
     locationSub.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10 },
+      { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 800, distanceInterval: 1 },
       (loc) => {
         setMyLoc({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-        setMyHeading(loc.coords.heading || 0);
+        const speed = loc.coords.speed || 0;
+        speedRef.current = speed;
+        // Strictly use GPS heading when moving fast enough (it's much more stable than compass)
+        if (speed > 1.5 && loc.coords.heading) {
+          setMyHeading(loc.coords.heading);
+        }
       }
     );
+
+    // Device Compass / Gyroscope Tracking
+    headingSub.current = await Location.watchHeadingAsync((heading) => {
+      // If the vehicle is moving, ignore the compass completely to prevent jitter
+      if (speedRef.current > 1.5) return;
+      
+      const newH = heading.trueHeading !== -1 ? heading.trueHeading : heading.magHeading;
+      setMyHeading((prev) => {
+        // Dampen: Only rotate the map if the phone is turned by more than 4 degrees
+        if (Math.abs(newH - prev) > 4) return newH;
+        return prev;
+      });
+    });
   };
 
   // Fit map and update route geometry based on status
@@ -109,7 +153,7 @@ export default function RideActiveScreen() {
     if (routeFetchedForStatus === s) return; // Prevent API spam
 
     const points = [{ latitude: myLoc.latitude, longitude: myLoc.longitude }];
-    
+
     if (['driver_assigned', 'driver_enroute', 'arrived_at_pickup'].includes(s) && booking.pickup_lat) {
       points.push({ latitude: parseFloat(booking.pickup_lat), longitude: parseFloat(booking.pickup_lng) });
       // Fetch driver → pickup route
@@ -126,7 +170,47 @@ export default function RideActiveScreen() {
         mapRef.current?.fitToCoordinates(points, { edgePadding: { top: 100, right: 60, bottom: 300, left: 60 }, animated: true });
       }, 500);
     }
-  }, [booking?.status, myLoc, routeFetchedForStatus]);
+  }, [booking?.status, routeFetchedForStatus]);
+
+  // Smooth camera follow — Camera focuses AHEAD of the driver
+  useEffect(() => {
+    if (!isNavigating || !mapRef.current || !myLoc) return;
+    const rad = ((myHeading || 0) * Math.PI) / 180;
+    
+    // Offset camera center slightly AHEAD of the car so the car stays in the lower-middle
+    // and the road geometry ahead is fully visible.
+    const centerLat = myLoc.latitude + Math.cos(rad) * 0.0003;
+    const centerLng = myLoc.longitude + Math.sin(rad) * 0.0003;
+    
+    mapRef.current.animateCamera({
+      center: { latitude: centerLat, longitude: centerLng },
+      pitch: 65, // Optimal pitch to see far ahead without distorting the map route
+      heading: myHeading || 0,
+      zoom: 20, // Very close zoom
+    }, { duration: 1000 });
+  }, [myLoc, myHeading, isNavigating]);
+
+  // Refresh route every 20s during navigation
+  const navRefreshRef = useRef(null);
+  useEffect(() => {
+    if (!isNavigating || !myLoc || !booking) return;
+    navRefreshRef.current = setInterval(() => {
+      if (!myLoc) return;
+      const s = booking?.status;
+      if (['driver_assigned', 'driver_enroute', 'arrived_at_pickup'].includes(s) && booking.pickup_lat) {
+        fetchRoute(myLoc.latitude, myLoc.longitude, parseFloat(booking.pickup_lat), parseFloat(booking.pickup_lng));
+      } else if (['ride_started', 'otp_verified'].includes(s) && booking.drop_lat) {
+        fetchRoute(myLoc.latitude, myLoc.longitude, parseFloat(booking.drop_lat), parseFloat(booking.drop_lng));
+      }
+    }, 20000);
+    return () => clearInterval(navRefreshRef.current);
+  }, [isNavigating, booking?.status]);
+
+  const stopInAppNavigation = () => {
+    setIsNavigating(false);
+    setRouteFetchedForStatus('');
+    clearInterval(navRefreshRef.current);
+  };
 
   const fetchRoute = async (fromLat, fromLng, toLat, toLng) => {
     try {
@@ -146,7 +230,7 @@ export default function RideActiveScreen() {
         setBooking(res.data.booking);
         startWebSocket(res.data.booking.id);
       }
-    } catch (e) {}
+    } catch (e) { }
     setLoading(false);
   };
 
@@ -159,18 +243,13 @@ export default function RideActiveScreen() {
         if (!res.data.booking || ['ride_completed', 'canceled'].includes(res.data.booking?.status)) {
           clearInterval(pollRef.current);
         }
-      } catch (e) {}
+      } catch (e) { }
     }, 30000); // 30s fallback
   };
 
-  // Open Google Maps for turn-by-turn navigation
-  const openNavigation = (lat, lng, label = 'Destination') => {
-    const scheme = Platform.select({ ios: 'maps:', android: 'google.navigation:' });
-    const url = Platform.select({
-      ios: `${scheme}?daddr=${lat},${lng}&dirflg=d`,
-      android: `${scheme}q=${lat},${lng}`,
-    });
-    Linking.openURL(url).catch(() => Alert.alert('Error', 'Could not open Maps.'));
+  // In-app navigation — just toggle camera follow mode
+  const openNavigation = () => {
+    setIsNavigating(true);
   };
 
   const handleAction = async (action, extra = {}) => {
@@ -364,13 +443,18 @@ export default function RideActiveScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <MapView
         ref={mapRef} style={styles.map} provider={PROVIDER_GOOGLE}
+        customMapStyle={navMapStyle}
         initialRegion={{
           latitude: currentLocation?.latitude || booking?.pickup_lat || 25.6117,
           longitude: currentLocation?.longitude || booking?.pickup_lng || 85.1441,
           latitudeDelta: 0.02, longitudeDelta: 0.02,
         }}
-        showsUserLocation showsMyLocationButton={false}
-        customMapStyle={darkMapStyle}
+        showsUserLocation
+        showsMyLocationButton={false}
+        showsBuildings={false}
+        showsTraffic={false}
+        showsPointsOfInterest={false}
+        showsIndoors={false}
       >
         {/* Pickup Marker — only show before ride starts */}
         {booking?.pickup_lat && !['ride_started', 'otp_verified', 'ride_completed'].includes(booking?.status) && (
@@ -384,33 +468,76 @@ export default function RideActiveScreen() {
             <View style={styles.dropMarker}><Ionicons name="flag" size={20} color={COLORS.primary} /></View>
           </Marker>
         )}
-        {/* Route Polyline */}
+        {/* Route Polyline — thick blue like Google Maps */}
         {routeCoords.length > 0 && (
-          <Polyline coordinates={routeCoords} strokeColor={COLORS.primary} strokeWidth={4} />
+          <>
+            <Polyline coordinates={routeCoords} strokeColor="rgba(66,133,244,0.25)" strokeWidth={12} />
+            <Polyline coordinates={routeCoords} strokeColor="#4285F4" strokeWidth={6} />
+          </>
         )}
-        {/* Driver's own location marker with heading */}
+        {/* Driver's own location marker with heading */ /* Always points forward based on device orientation */}
         {myLoc && (
           <Marker
             coordinate={{ latitude: myLoc.latitude, longitude: myLoc.longitude }}
             rotation={myHeading}
             flat
             anchor={{ x: 0.5, y: 0.5 }}
+            style={{ zIndex: 1000 }}
           >
-            <View style={styles.driverMarker}>
-              <Ionicons name={getVehicleIcon(booking?.vehicle_type)} size={16} color={COLORS.white} />
+            <View style={styles.driverPuckWrap}>
+              {/* Massive 3D Navigation Chevron matching the image */}
+              <Ionicons name="navigate" size={80} color="#4285F4" style={styles.pureChevron} />
             </View>
           </Marker>
         )}
       </MapView>
 
-      <SafeAreaView style={styles.topOverlay}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={22} color={COLORS.text} />
-        </TouchableOpacity>
-      </SafeAreaView>
+      {!isNavigating && (
+        <SafeAreaView style={styles.topOverlay}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={22} color={COLORS.text} />
+          </TouchableOpacity>
+        </SafeAreaView>
+      )}
+
+      {/* Floating ETA/Distance bar during navigation */}
+      {isNavigating && (
+        <View style={styles.navEtaBar}>
+          <TouchableOpacity style={styles.navExitCircle} onPress={stopInAppNavigation}>
+            <Ionicons name="close" size={22} color={COLORS.text} />
+          </TouchableOpacity>
+          <View style={styles.navEtaCenter}>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+              <Text style={styles.navEtaMin}>{liveETA || booking?.duration_min || '--'}</Text>
+              <Text style={styles.navEtaMinLabel}> min</Text>
+            </View>
+            <Text style={styles.navEtaSub}>
+              {liveDistanceKm ? `${parseFloat(liveDistanceKm).toFixed(1)} km` : '--'}  •  {liveETA ? new Date(Date.now() + (liveETA) * 60000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '--'}
+            </Text>
+          </View>
+          <TouchableOpacity style={[styles.navRecenter, { marginRight: 10 }]} onPress={() => {
+            const destLat = ['ride_started', 'otp_verified'].includes(booking?.status) ? booking.drop_lat : booking.pickup_lat;
+            const destLng = ['ride_started', 'otp_verified'].includes(booking?.status) ? booking.drop_lng : booking.pickup_lng;
+            const url = `google.navigation:q=${destLat},${destLng}`;
+            Linking.openURL(url).catch(() => {
+              Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${destLat},${destLng}`);
+            });
+          }}>
+            <Ionicons name="map" size={20} color="#34A853" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navRecenter} onPress={() => {
+            if (mapRef.current && myLoc) {
+              const rad = ((myHeading || 0) * Math.PI) / 180;
+              mapRef.current.animateCamera({ center: { latitude: myLoc.latitude + Math.cos(rad) * 0.0003, longitude: myLoc.longitude + Math.sin(rad) * 0.0003 }, pitch: 65, heading: myHeading, zoom: 20 }, { duration: 400 });
+            }
+          }}>
+            <Ionicons name="navigate" size={20} color="#4285F4" />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Bottom Panel */}
-      <View style={styles.bottomPanel}>{getActionUI()}</View>
+      {!isNavigating && <View style={styles.bottomPanel}>{getActionUI()}</View>}
 
       {/* OTP Modal */}
       <Modal visible={showOtpModal} transparent animationType="fade">
@@ -516,6 +643,14 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.border,
   },
 
+  navEtaBar: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 14, paddingBottom: Platform.OS === 'android' ? 14 : 34, elevation: 12, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.12, shadowRadius: 6 },
+  navExitCircle: { width: 42, height: 42, borderRadius: 21, borderWidth: 1.5, borderColor: '#DADCE0', justifyContent: 'center', alignItems: 'center' },
+  navEtaCenter: { flex: 1, alignItems: 'center' },
+  navEtaMin: { fontSize: 30, fontWeight: '800', color: '#1B873B' },
+  navEtaMinLabel: { fontSize: 16, fontWeight: '700', color: '#1B873B' },
+  navEtaSub: { fontSize: 13, fontWeight: '500', color: '#70757A', marginTop: 2 },
+  navRecenter: { width: 42, height: 42, borderRadius: 21, borderWidth: 1.5, borderColor: '#DADCE0', justifyContent: 'center', alignItems: 'center' },
+
   pickupMarker: { alignItems: 'center' },
   dropMarker: { alignItems: 'center' },
 
@@ -589,8 +724,20 @@ const styles = StyleSheet.create({
   navBtnText: { color: COLORS.info, fontSize: SIZES.md, fontWeight: '700' },
 
   // Driver marker on map
-  driverMarker: {
-    width: 32, height: 32, borderRadius: 16, backgroundColor: COLORS.primary,
-    justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: COLORS.white,
+  driverPuckWrap: {
+    width: 100, height: 100, justifyContent: 'center', alignItems: 'center', backgroundColor: 'transparent'
+  },
+  pureChevron: {
+    transform: [{ rotate: '45deg' }], // Align strictly UP
+    textShadowColor: 'transparent', // Ensure no shadow acts as a circle on android
   },
 });
+
+const navMapStyle = [
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#f5f5f5' }] },
+  { featureType: 'road', elementType: 'geometry.fill', stylers: [{ color: '#ffffff' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#e0e0e0' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c9c9c9' }] }
+];

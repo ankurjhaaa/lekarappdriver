@@ -9,6 +9,7 @@ export default function MainLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="ride-active" />
+      <Stack.Screen name="navigation" options={{ animation: 'slide_from_bottom' }} />
     </Stack>
   );
 }
