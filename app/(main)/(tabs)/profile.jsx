@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { COLORS, SIZES, SHADOWS } from '../../../src/constants/theme';
 import useAuthStore from '../../../src/store/authStore';
 import { driverAPI } from '../../../src/api/driver';
+import DriverHeader from '../../../src/components/DriverHeader';
 
 export default function DriverProfileScreen() {
   const { user, logout } = useAuthStore();
@@ -31,17 +31,19 @@ export default function DriverProfileScreen() {
   };
 
   const menuItems = [
-    { icon: 'car-sport-outline', label: 'My Vehicle', color: COLORS.info },
-    { icon: 'document-text-outline', label: 'Documents', color: COLORS.warning },
-    { icon: 'shield-checkmark-outline', label: 'Safety', color: COLORS.success },
-    { icon: 'help-circle-outline', label: 'Help & Support', color: '#00BCD4' },
-    { icon: 'information-circle-outline', label: 'About', color: COLORS.textMuted },
+    { icon: 'car-sport-outline', label: 'My Vehicle', color: COLORS.info, route: '/(main)/my-vehicle' },
+    { icon: 'document-text-outline', label: 'Documents', color: COLORS.warning, route: '/(main)/documents' },
+    { icon: 'shield-checkmark-outline', label: 'Safety', color: COLORS.success, route: '/(main)/safety' },
+    { icon: 'help-circle-outline', label: 'Help & Support', color: '#00BCD4', route: '/(main)/help-support' },
+    { icon: 'information-circle-outline', label: 'About', color: COLORS.textMuted, route: '/(main)/about' },
   ];
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      <DriverHeader title="Profile" />
+
       <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.header}><Text style={styles.title}>Profile</Text></View>
+        <View style={{ height: 16 }} />
 
         <View style={styles.profileCard}>
           <View style={styles.avatar}><Text style={styles.avatarText}>{user?.name?.[0]?.toUpperCase() || 'D'}</Text></View>
@@ -49,6 +51,14 @@ export default function DriverProfileScreen() {
             <Text style={styles.userName}>{user?.name || 'Driver'}</Text>
             <Text style={styles.userPhone}>{user?.phone ? `+91 ${user.phone}` : ''}</Text>
             {driver && <Text style={styles.vehicleInfo}>{driver.vehicle_name || ''} • {driver.number_plate || ''}</Text>}
+            <TouchableOpacity 
+              style={styles.editProfileBtn} 
+              activeOpacity={0.7} 
+              onPress={() => router.push('/(main)/edit-profile')}
+            >
+              <Ionicons name="eye-outline" size={13} color={COLORS.primary} />
+              <Text style={styles.editProfileText}>Profile Info</Text>
+            </TouchableOpacity>
           </View>
           <View style={styles.ratingTag}>
             <Ionicons name="star" size={14} color={COLORS.warning} />
@@ -58,7 +68,12 @@ export default function DriverProfileScreen() {
 
         <View style={styles.menu}>
           {menuItems.map((item, i) => (
-            <TouchableOpacity key={i} style={styles.menuItem} activeOpacity={0.7}>
+            <TouchableOpacity 
+              key={i} 
+              style={styles.menuItem} 
+              activeOpacity={0.7}
+              onPress={() => router.push(item.route)}
+            >
               <View style={[styles.menuIcon, { backgroundColor: item.color + '15' }]}>
                 <Ionicons name={item.icon} size={20} color={item.color} />
               </View>
@@ -75,7 +90,7 @@ export default function DriverProfileScreen() {
 
         <Text style={styles.version}>Lekar Driver v1.0.0</Text>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -97,6 +112,8 @@ const styles = StyleSheet.create({
   userName: { fontSize: SIZES.lg, fontWeight: '700', color: COLORS.text },
   userPhone: { fontSize: SIZES.sm, color: COLORS.textSecondary, marginTop: 2 },
   vehicleInfo: { fontSize: SIZES.xs, color: COLORS.textMuted, marginTop: 4 },
+  editProfileBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8, alignSelf: 'flex-start' },
+  editProfileText: { fontSize: 12, fontWeight: '700', color: COLORS.primary },
   ratingTag: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.surfaceLight, paddingHorizontal: 10, paddingVertical: 6, borderRadius: SIZES.radiusFull },
   ratingText: { fontSize: SIZES.sm, fontWeight: '700', color: COLORS.text },
   menu: {

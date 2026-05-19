@@ -116,7 +116,7 @@ export default function RideActiveScreen() {
   const startLocationTracking = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') return;
-    
+
     // GPS Position
     locationSub.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 800, distanceInterval: 1 },
@@ -135,7 +135,7 @@ export default function RideActiveScreen() {
     headingSub.current = await Location.watchHeadingAsync((heading) => {
       // If the vehicle is moving, ignore the compass completely to prevent jitter
       if (speedRef.current > 1.5) return;
-      
+
       const newH = heading.trueHeading !== -1 ? heading.trueHeading : heading.magHeading;
       setMyHeading((prev) => {
         // Dampen: Only rotate the map if the phone is turned by more than 4 degrees
@@ -176,12 +176,12 @@ export default function RideActiveScreen() {
   useEffect(() => {
     if (!isNavigating || !mapRef.current || !myLoc) return;
     const rad = ((myHeading || 0) * Math.PI) / 180;
-    
+
     // Offset camera center slightly AHEAD of the car so the car stays in the lower-middle
     // and the road geometry ahead is fully visible.
     const centerLat = myLoc.latitude + Math.cos(rad) * 0.0003;
     const centerLng = myLoc.longitude + Math.sin(rad) * 0.0003;
-    
+
     mapRef.current.animateCamera({
       center: { latitude: centerLat, longitude: centerLng },
       pitch: 65, // Optimal pitch to see far ahead without distorting the map route

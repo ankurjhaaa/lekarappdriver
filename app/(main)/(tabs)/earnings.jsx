@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { View, Text, StyleSheet, RefreshControl, ScrollView, Dimensions, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { COLORS, SIZES, SHADOWS } from '../../../src/constants/theme';
 import { driverAPI } from '../../../src/api/driver';
 import { formatCurrency } from '../../../src/utils/helpers';
+import DriverHeader from '../../../src/components/DriverHeader';
 
 const { width } = Dimensions.get('window');
 
@@ -62,14 +63,14 @@ export default function EarningsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      <DriverHeader title="Wallet & Earnings" />
+      
       <ScrollView 
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetch(); }} tintColor={COLORS.primary} />}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <Text style={styles.title}>Wallet & Earnings</Text>
-        </View>
+        <View style={{ height: 16 }} />
 
         {/* Main Wallet Card */}
         <View style={styles.walletCard}>
@@ -80,8 +81,12 @@ export default function EarningsScreen() {
           <Text style={styles.walletAmount}>{formatCurrency(data.wallet_balance)}</Text>
           
           <View style={styles.walletActions}>
-            <TouchableOpacity style={styles.withdrawBtn} activeOpacity={0.8}>
-              <Text style={styles.withdrawText}>Withdraw Funds</Text>
+            <TouchableOpacity 
+              style={styles.withdrawBtn} 
+              activeOpacity={0.8}
+              onPress={() => router.push('/(main)/add-payout-method')}
+            >
+              <Text style={styles.withdrawText}>Add Payout Method</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -146,7 +151,7 @@ export default function EarningsScreen() {
         
         <View style={{ height: 40 }} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 

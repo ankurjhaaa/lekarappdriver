@@ -65,6 +65,12 @@ export default function DriverVerifyOtpScreen() {
 
       const res = await authAPI.verifyOtp(payload);
       if (res.data.success) {
+        const u = res.data.user;
+        if (u && u.role !== 'driver') {
+          Alert.alert('Access Denied', 'Only registered drivers are authorized to access this application.');
+          setLoading(false);
+          return;
+        }
         await setAuth(res.data.token, res.data.user);
         router.replace('/(main)/(tabs)/home');
       }
@@ -79,10 +85,7 @@ export default function DriverVerifyOtpScreen() {
       let res;
       if (via === 'email' && email) {
         res = await authAPI.loginEmail(email);
-      } else {
-        res = await authAPI.login(phone);
       }
-      if (res.data.otp) Alert.alert('Dev OTP', `New OTP: ${res.data.otp}`);
       setTimer(60);
     } catch (e) {
       Alert.alert('Error', 'Failed to resend OTP.');

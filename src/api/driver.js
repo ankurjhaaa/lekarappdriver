@@ -1,11 +1,9 @@
 import api from './client';
 
 export const authAPI = {
-  register: (data) => api.post('/auth/register', data),
-  login: (phone) => api.post('/auth/login', { phone }),
-  loginEmail: (email) => api.post('/auth/login-email', { email }),
-  loginPassword: (data) => api.post('/auth/login-password', data),
-  verifyOtp: (data) => api.post('/auth/verify-otp', data),
+  loginEmail: (email) => api.post('/auth/captain/login-email', { email }),
+  loginPassword: (data) => api.post('/auth/captain/login-password', data),
+  verifyOtp: (data) => api.post('/auth/captain/verify-otp', data),
   logout: () => api.post('/auth/logout'),
   me: () => api.get('/auth/me'),
 };
@@ -18,6 +16,7 @@ export const driverAPI = {
   getEarnings: () => api.get('/driver/earnings'),
   getRideHistory: (page = 1) => api.get('/driver/ride-history', { params: { page } }),
   getProfile: () => api.get('/driver/profile'),
+  updateProfile: (data) => api.put('/user/profile', data),
   // Chat
   getMessages: (bookingId) => api.get(`/rides/${bookingId}/chat`),
   sendMessage: (bookingId, message) => api.post(`/rides/${bookingId}/chat`, { message }),

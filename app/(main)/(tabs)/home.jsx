@@ -423,7 +423,7 @@ const darkMapStyle = [
 ];
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: '#0F0F14' },
   map: { flex: 1 },
   loadingC: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },
   loadingText: { marginTop: 12, color: COLORS.textSecondary, fontSize: SIZES.md },

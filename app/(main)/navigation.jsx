@@ -1,11 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { ActivityIndicator, DeviceEventEmitter, Dimensions, Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View, Animated } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, DeviceEventEmitter, Dimensions, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '../../src/components/MapViewSafe';
 import { placesAPI } from '../../src/api/places';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '../../src/components/MapViewSafe';
 import { decodePolyline } from '../../src/utils/helpers';
 
 const { width: SW } = Dimensions.get('window');
@@ -28,7 +28,7 @@ const getManeuverIcon = (m) => {
 const haversineM = (a, b) => {
   if (!a || !b) return 99999;
   const R = 6371000, dLat = ((b.latitude - a.latitude) * Math.PI) / 180, dLng = ((b.longitude - a.longitude) * Math.PI) / 180;
-  const x = Math.sin(dLat/2)**2 + Math.cos(a.latitude*Math.PI/180)*Math.cos(b.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.latitude * Math.PI / 180) * Math.cos(b.latitude * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 };
 
