@@ -7,7 +7,8 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
 const hostUri = Constants.expoConfig?.hostUri;
-const HOST = hostUri ? hostUri.split(':')[0] : '192.168.29.128';
+const HOST = hostUri ? hostUri.split(':')[0] : '10.57.127.98';
+
 
 export const CONFIG = {
   API_BASE_URL: `http://${HOST}:8000/api/v1`,
