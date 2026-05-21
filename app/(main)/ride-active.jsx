@@ -112,6 +112,28 @@ export default function RideActiveScreen() {
     };
   }, []);
 
+  // Handle cancellation or empty booking
+  useEffect(() => {
+    if (booking?.status === 'canceled') {
+      if (pollRef.current) clearInterval(pollRef.current);
+      Alert.alert(
+        'Ride Canceled',
+        'This ride has been canceled by the passenger.',
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              clearBooking();
+              setDriverStatus('online');
+              router.replace('/(main)/(tabs)/home');
+            }
+          }
+        ],
+        { cancelable: false }
+      );
+    }
+  }, [booking?.status]);
+
   // Live GPS tracking — High Frequency for Navigation
   const startLocationTracking = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -226,25 +248,70 @@ export default function RideActiveScreen() {
   const loadBooking = async () => {
     try {
       const res = await driverAPI.getStatus();
-      if (res.data.success && res.data.booking) {
-        setBooking(res.data.booking);
-        startWebSocket(res.data.booking.id);
+      if (res.data.success) {
+        if (res.data.booking) {
+          if (res.data.booking.status === 'canceled') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            Alert.alert(
+              'Ride Canceled',
+              'This ride has been canceled by the passenger.',
+              [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    clearBooking();
+                    setDriverStatus('online');
+                    router.replace('/(main)/(tabs)/home');
+                  }
+                }
+              ],
+              { cancelable: false }
+            );
+          } else {
+            setBooking(res.data.booking);
+            startWebSocket(res.data.booking.id);
+          }
+        } else {
+          clearBooking();
+          setDriverStatus('online');
+          router.replace('/(main)/(tabs)/home');
+        }
       }
     } catch (e) { }
     setLoading(false);
   };
 
   const startPolling = () => {
-    // Polling is a safety fallback — WebSocket handles real-time
     pollRef.current = setInterval(async () => {
       try {
         const res = await driverAPI.getStatus();
-        if (res.data.booking) setBooking(res.data.booking);
-        if (!res.data.booking || ['ride_completed', 'canceled'].includes(res.data.booking?.status)) {
-          clearInterval(pollRef.current);
+        if (res.data.success) {
+          if (!res.data.booking) {
+            clearInterval(pollRef.current);
+            Alert.alert(
+              'Ride Canceled',
+              'This ride has been canceled.',
+              [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    clearBooking();
+                    setDriverStatus('online');
+                    router.replace('/(main)/(tabs)/home');
+                  }
+                }
+              ],
+              { cancelable: false }
+            );
+          } else {
+            setBooking(res.data.booking);
+            if (res.data.booking.status === 'canceled') {
+              clearInterval(pollRef.current);
+            }
+          }
         }
       } catch (e) { }
-    }, 30000); // 30s fallback
+    }, 20000); // 20s fallback
   };
 
   // In-app navigation — just toggle camera follow mode

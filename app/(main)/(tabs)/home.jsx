@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from '../../../src/components/MapViewSafe';
 import * as Location from 'expo-location';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../../../src/constants/theme';
 import { driverAPI } from '../../../src/api/driver';
@@ -47,10 +47,16 @@ export default function DriverHomeScreen() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const slideAnim = useRef(new Animated.Value(300)).current;
 
-  // Initial load
+  // Refresh driver state on tab focus
+  useFocusEffect(
+    useCallback(() => {
+      acceptedRef.current = false; // Reset so new ride requests can show
+      initializeDriver();
+    }, [])
+  );
+
+  // Initial load cleanup
   useEffect(() => {
-    acceptedRef.current = false; // Reset so new ride requests can show
-    initializeDriver();
     return () => {
       if (locationSub.current) locationSub.current.remove();
       if (countdownRef.current) clearInterval(countdownRef.current);
@@ -93,6 +99,8 @@ export default function DriverHomeScreen() {
         if (res.data.booking) {
           setCurrentBooking(res.data.booking);
           router.push({ pathname: '/(main)/ride-active', params: { bookingId: res.data.booking.id } });
+        } else {
+          setCurrentBooking(null);
         }
       }
     } catch (e) {
