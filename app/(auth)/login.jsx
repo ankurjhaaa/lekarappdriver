@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   View,
@@ -32,6 +32,21 @@ export default function DriverLoginScreen() {
   const [loading, setLoading] = useState(false);
   const setAuth = useAuthStore((s) => s.setAuth);
 
+  // Inline OTP verification states
+  const [showOtpVerification, setShowOtpVerification] = useState(false);
+  const [otp, setOtp] = useState(['', '', '', '']);
+  const [timer, setTimer] = useState(60);
+  const otpInputsRef = useRef([]);
+
+  // Resend Timer Countdown
+  useEffect(() => {
+    if (!showOtpVerification || timer <= 0) return;
+    const intervalId = setInterval(() => {
+      setTimer((t) => t - 1);
+    }, 1000);
+    return () => clearInterval(intervalId);
+  }, [showOtpVerification, timer]);
+
   // ── Email OTP ──
   const handleEmailOtp = async () => {
     if (!email.includes('@')) { Alert.alert('Error', 'Enter valid email.'); return; }
@@ -39,10 +54,50 @@ export default function DriverLoginScreen() {
     try {
       const res = await authAPI.loginEmail(email);
       if (res.data.success) {
-        router.push({ pathname: '/(auth)/verify-otp', params: { email, phone: res.data.phone, via: 'email' } });
+        // Transition to inline OTP verification
+        setShowOtpVerification(true);
+        setTimer(60);
+        setOtp(['', '', '', '']);
+        setTimeout(() => {
+          otpInputsRef.current[0]?.focus();
+        }, 150);
       }
     } catch (e) {
       Alert.alert('Error', e.response?.data?.message || 'Login failed.');
+    }
+    setLoading(false);
+  };
+
+  // ── Verify OTP inline ──
+  const handleVerifyOtp = async () => {
+    const code = otp.join('');
+    if (code.length !== 4) {
+      Alert.alert('Error', 'Please enter the 4-digit verification code.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const payload = {
+        otp: code,
+        email: email.trim(),
+        device_name: Platform.OS + '_lekar_driver',
+        device_type: Platform.OS === 'ios' ? 'ios' : 'android',
+      };
+
+      const res = await authAPI.verifyOtp(payload);
+      if (res.data.success) {
+        const u = res.data.user;
+        // Strict role validation
+        if (u && u.role !== 'driver') {
+          Alert.alert('Access Denied', 'Only registered Captains are authorized to access this application.');
+          setLoading(false);
+          return;
+        }
+        await setAuth(res.data.token, res.data.user);
+        router.replace('/(main)/(tabs)/home');
+      }
+    } catch (e) {
+      Alert.alert('Error', e.response?.data?.message || 'Incorrect OTP code.');
     }
     setLoading(false);
   };
@@ -75,13 +130,41 @@ export default function DriverLoginScreen() {
     setLoading(false);
   };
 
+  const handleOtpChange = (text, index) => {
+    const newOtp = [...otp];
+    newOtp[index] = text.replace(/[^0-9]/g, '');
+    setOtp(newOtp);
+    if (text && index < 3) {
+      otpInputsRef.current[index + 1]?.focus();
+    }
+  };
+
+  const handleOtpKeyPress = (e, index) => {
+    if (e.nativeEvent.key === 'Backspace' && !otp[index] && index > 0) {
+      otpInputsRef.current[index - 1]?.focus();
+    }
+  };
+
+  const handleResendOtp = async () => {
+    try {
+      await authAPI.loginEmail(email.trim());
+      setTimer(60);
+      setOtp(['', '', '', '']);
+      otpInputsRef.current[0]?.focus();
+    } catch (e) {
+      Alert.alert('Error', 'Failed to resend code.');
+    }
+  };
+
   const isValid = () => {
+    if (showOtpVerification) return otp.join('').length === 4;
     if (activeTab === 0) return email.includes('@');
     return email.includes('@') && password.length >= 6;
   };
 
   const handleSubmit = () => {
-    if (activeTab === 0) handleEmailOtp();
+    if (showOtpVerification) handleVerifyOtp();
+    else if (activeTab === 0) handleEmailOtp();
     else handlePasswordLogin();
   };
 
@@ -97,63 +180,119 @@ export default function DriverLoginScreen() {
           />
 
           <View style={styles.mainContent}>
-            {/* Title Section */}
-            <View style={styles.titleSection}>
-              <View style={styles.badge}>
-                <Ionicons name="shield-checkmark" size={12} color={COLORS.primary} />
-                <Text style={styles.badgeText}>OFFICIAL CAPTAIN ACCESS</Text>
-              </View>
-              <Text style={styles.title}>Lekar Captain</Text>
-              <Text style={styles.subtitle}>Secure access for registered platform captains</Text>
-            </View>
 
-            {/* Authentication Method Tabs */}
-            <View style={styles.tabRow}>
-              {TABS.map((t, i) => (
-                <TouchableOpacity key={i} style={[styles.tab, activeTab === i && styles.tabActive]}
-                  onPress={() => setActiveTab(i)}>
-                  <Text style={[styles.tabText, activeTab === i && styles.tabTextActive]}>{t}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Email OTP Field */}
-            {activeTab === 0 && (
-              <View style={styles.inputBlock}>
-                <Text style={styles.label}>Email Address</Text>
-                <View style={styles.inputRow}>
-                  <Ionicons name="mail" size={20} color={COLORS.textMuted} />
-                  <TextInput style={styles.emailInput} placeholder="captain@lekar.com"
-                    placeholderTextColor={COLORS.textMuted} value={email}
-                    onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none"
-                  />
+            {/* Title Section — Changes during OTP verification */}
+            {!showOtpVerification ? (
+              <View style={styles.titleSection}>
+                <View style={styles.badge}>
+                  <Ionicons name="shield-checkmark" size={12} color={COLORS.primary} />
+                  <Text style={styles.badgeText}>OFFICIAL CAPTAIN ACCESS</Text>
                 </View>
-                <Text style={styles.hint}>OTP authentication key will be sent to this email</Text>
+                <Text style={styles.title}>Lekar Captain</Text>
+                <Text style={styles.subtitle}>Secure access for registered platform captains</Text>
+              </View>
+            ) : (
+              <View style={styles.titleSection}>
+                <TouchableOpacity
+                  onPress={() => setShowOtpVerification(false)}
+                  style={styles.backLink}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="arrow-back" size={18} color={COLORS.primary} />
+                  <Text style={styles.backLinkText}>Change email</Text>
+                </TouchableOpacity>
+                <Text style={styles.title}>Verification</Text>
+                <Text style={styles.subtitle}>Enter the 4-digit code sent to {email}</Text>
               </View>
             )}
 
-            {/* Password Fields */}
-            {activeTab === 1 && (
-              <View style={styles.inputBlock}>
-                <Text style={styles.label}>Email Address</Text>
-                <View style={styles.inputRow}>
-                  <Ionicons name="mail" size={20} color={COLORS.textMuted} />
-                  <TextInput style={styles.emailInput} placeholder="captain@lekar.com"
-                    placeholderTextColor={COLORS.textMuted} value={email}
-                    onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none"
-                  />
-                </View>
-                
-                <Text style={[styles.label, { marginTop: 16 }]}>Password</Text>
-                <View style={styles.inputRow}>
-                  <Ionicons name="lock-closed" size={20} color={COLORS.textMuted} />
-                  <TextInput style={styles.emailInput} placeholder="••••••••"
-                    placeholderTextColor={COLORS.textMuted} value={password}
-                    onChangeText={setPassword} secureTextEntry={!showPass}
-                  />
-                  <TouchableOpacity onPress={() => setShowPass(!showPass)}>
-                    <Ionicons name={showPass ? 'eye-off' : 'eye'} size={20} color={COLORS.textMuted} />
+            {/* Authentication Method Tabs — Hidden during OTP verification */}
+            {!showOtpVerification && (
+              <View style={styles.tabRow}>
+                {TABS.map((t, i) => (
+                  <TouchableOpacity key={i} style={[styles.tab, activeTab === i && styles.tabActive]}
+                    onPress={() => setActiveTab(i)}>
+                    <Text style={[styles.tabText, activeTab === i && styles.tabTextActive]}>{t}</Text>
                   </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* Dynamic Form Area */}
+            {!showOtpVerification ? (
+              <>
+                {/* Email OTP Field */}
+                {activeTab === 0 && (
+                  <View style={styles.inputBlock}>
+                    <Text style={styles.label}>Email Address</Text>
+                    <View style={styles.inputRow}>
+                      <Ionicons name="mail" size={20} color={COLORS.textMuted} />
+                      <TextInput style={styles.emailInput} placeholder="captain@lekar.com"
+                        placeholderTextColor={COLORS.textMuted} value={email}
+                        onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none"
+                      />
+                    </View>
+                    <Text style={styles.hint}>OTP authentication key will be sent to this email</Text>
+                  </View>
+                )}
+
+                {/* Password Fields */}
+                {activeTab === 1 && (
+                  <View style={styles.inputBlock}>
+                    <Text style={styles.label}>Email Address</Text>
+                    <View style={styles.inputRow}>
+                      <Ionicons name="mail" size={20} color={COLORS.textMuted} />
+                      <TextInput style={styles.emailInput} placeholder="captain@lekar.com"
+                        placeholderTextColor={COLORS.textMuted} value={email}
+                        onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none"
+                      />
+                    </View>
+                    
+                    <Text style={[styles.label, { marginTop: 16 }]}>Password</Text>
+                    <View style={styles.inputRow}>
+                      <Ionicons name="lock-closed" size={20} color={COLORS.textMuted} />
+                      <TextInput style={styles.emailInput} placeholder="••••••••"
+                        placeholderTextColor={COLORS.textMuted} value={password}
+                        onChangeText={setPassword} secureTextEntry={!showPass}
+                      />
+                      <TouchableOpacity onPress={() => setShowPass(!showPass)}>
+                        <Ionicons name={showPass ? 'eye-off' : 'eye'} size={20} color={COLORS.textMuted} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </>
+            ) : (
+              /* Inline OTP Passcode Grid */
+              <View style={styles.inputBlock}>
+                <View style={styles.otpRow}>
+                  {otp.map((digit, index) => (
+                    <TextInput
+                      key={index}
+                      ref={(ref) => (otpInputsRef.current[index] = ref)}
+                      style={[styles.otpInput, digit !== '' && styles.otpInputFilled]}
+                      value={digit}
+                      onChangeText={(text) => handleOtpChange(text, index)}
+                      onKeyPress={(e) => handleOtpKeyPress(e, index)}
+                      keyboardType="number-pad"
+                      maxLength={1}
+                      textAlign="center"
+                      editable={!loading}
+                    />
+                  ))}
+                </View>
+
+                {/* Timer & Resend */}
+                <View style={styles.timerRow}>
+                  {timer > 0 ? (
+                    <Text style={styles.timerText}>
+                      Resend code in <Text style={styles.timerCountdown}>{timer}s</Text>
+                    </Text>
+                  ) : (
+                    <TouchableOpacity onPress={handleResendOtp} activeOpacity={0.7}>
+                      <Text style={styles.resendText}>Resend OTP</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
             )}
@@ -162,7 +301,11 @@ export default function DriverLoginScreen() {
             <TouchableOpacity style={[styles.btn, !isValid() && styles.btnOff]}
               onPress={handleSubmit} disabled={loading || !isValid()} activeOpacity={0.8}>
               {loading ? <ActivityIndicator color={COLORS.white} /> : (
-                <Text style={styles.btnText}>{activeTab === 1 ? 'Log In Securely' : 'Request OTP'}</Text>
+                <Text style={styles.btnText}>
+                  {showOtpVerification
+                    ? 'Verify Code'
+                    : activeTab === 1 ? 'Log In Securely' : 'Request OTP'}
+                </Text>
               )}
             </TouchableOpacity>
 
@@ -232,6 +375,17 @@ const styles = StyleSheet.create({
     marginTop: 4,
     lineHeight: 18,
   },
+  backLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 12,
+  },
+  backLinkText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: COLORS.primary,
+  },
 
   // Tabs
   tabRow: {
@@ -263,6 +417,34 @@ const styles = StyleSheet.create({
   },
   emailInput: { flex: 1, paddingVertical: 16, fontSize: SIZES.base, color: COLORS.text },
   hint: { fontSize: SIZES.xs, color: COLORS.textMuted, marginTop: 6, marginLeft: 4 },
+
+  // OTP styles
+  otpRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 20,
+  },
+  otpInput: {
+    flex: 1,
+    height: 56,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0F172A',
+    backgroundColor: '#F8FAFC',
+  },
+  otpInputFilled: {
+    borderColor: COLORS.primary,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+  },
+  timerRow: { alignItems: 'center', marginTop: 8 },
+  timerText: { fontSize: 13, color: '#64748B', fontWeight: '500' },
+  timerCountdown: { color: '#0F172A', fontWeight: '700' },
+  resendText: { fontSize: 13, color: COLORS.primary, fontWeight: '700' },
 
   // Button
   btn: { backgroundColor: COLORS.primary, paddingVertical: 18, borderRadius: SIZES.radius, alignItems: 'center', ...SHADOWS.glow },
