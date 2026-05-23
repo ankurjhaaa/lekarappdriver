@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES, SHADOWS } from '../../src/constants/theme';
 import { authAPI } from '../../src/api/driver';
 import useAuthStore from '../../src/store/authStore';
+import { getExpoPushToken } from '../../src/utils/pushToken';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TABS = ['Email OTP', 'Password'];
@@ -77,11 +78,14 @@ export default function DriverLoginScreen() {
     }
     setLoading(true);
     try {
+      const pushToken = await getExpoPushToken();
+
       const payload = {
         otp: code,
         email: email.trim(),
         device_name: Platform.OS + '_lekar_driver',
         device_type: Platform.OS === 'ios' ? 'ios' : 'android',
+        expo_push_token: pushToken,
       };
 
       const res = await authAPI.verifyOtp(payload);
@@ -108,10 +112,13 @@ export default function DriverLoginScreen() {
     if (password.length < 6) { Alert.alert('Error', 'Password must be 6+ characters.'); return; }
     setLoading(true);
     try {
+      const pushToken = await getExpoPushToken();
+
       const res = await authAPI.loginPassword({
         email, password,
         device_name: Platform.OS + '_lekar_driver',
         device_type: Platform.OS === 'ios' ? 'ios' : 'android',
+        expo_push_token: pushToken,
       });
       if (res.data.success) {
         const u = res.data.user;
